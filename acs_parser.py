@@ -118,7 +118,7 @@ def parse_universes(f):
         for i, row in enumerate(reader):
             universe_dimensions[row[0].lower()] = {}
             if row[1] <> '':
-                universe_measure[row[0]] = row[1]
+                universe_measure[row[0].lower()] = row[1]
             for d in range(0, 9, 2):
                 dim, val = row[d + 2], row[d + 3]
                 if dim <> '' and dim <> "?":
@@ -181,10 +181,12 @@ def flatten_dimensions(q_dict, a_dict, all_dims, qs_with_dims, universe_dim, uni
         universe = q_dict[q]["universe"].lower()
         # Set dimension values to "All" for all dimensions
         a_dict[k]["dims"] = {dim:"All" for dim in all_dims}
+        # Set the question's measure based on universe
+        a_dict[k]["measure"] = universe_meas[universe]
 
         # Set the dimension values correctly for the universe of the question
         for d, val in universe_dim[universe].iteritems():
-            if d in a_dict[k]["dims"]:
+            if d in a_dict[k]["dims"] and val.strip() <> '':
                 if a_dict[k]["dims"][d] == "All":
                     a_dict[k]["dims"][d] = val
                 else:
@@ -196,17 +198,18 @@ def flatten_dimensions(q_dict, a_dict, all_dims, qs_with_dims, universe_dim, uni
                 # the hierarchy on this answer
                 if l in qs_with_dims[q]:
                     # Skip values that are blank or Total
-                    if d == "Total" or qs_with_dims[q][l] == "":
+                    if clean(d) == "Total" or qs_with_dims[q][l] == "":
                         pass
                     # For real values, replace the "All" with the clean value name
-                    elif qs_with_dims[q][l] in a_dict[k]["dims"]:
+                    elif qs_with_dims[q][l] in a_dict[k]["dims"] and d.strip() <> '':
                         if a_dict[k]["dims"][qs_with_dims[q][l]] == "All":
                             a_dict[k]["dims"][qs_with_dims[q][l]] = clean(d)
                         else:
                             a_dict[k]["dims"][qs_with_dims[q][l]] += '|' + clean(d)
 
+    # print a_dict["B08528_009"]["dims"]["Class of Worker"]
     return a_dict
-    print a_dict["B11001B_005"]["dims"]
+    
 
 def clean(dirty):
     cleaned = re.sub('(\:| \(dollars\)| --)', '', dirty).strip()
@@ -237,10 +240,10 @@ def output_tables(q_dict, a_dict, v_dict):
                             row["universe"],
                             row["name"]])
 
-    with open("answers.csv", "wb") as csv_file:
+    with open("answer_dimensions.csv", "wb") as csv_file:
         writer = csv.writer(csv_file, delimiter=',')
         dimension_names = sorted(a_dict["B00001_001"]["dims"].keys())
-        writer.writerow(["q_id", "a_id", "sequence", "position"] + dimension_names)
+        writer.writerow(["q_id", "a_id", "sequence", "position", "measure"] + dimension_names)
 
 
         for k, row in a_dict.iteritems():
@@ -250,8 +253,25 @@ def output_tables(q_dict, a_dict, v_dict):
             writer.writerow([k.split("_")[0],
                             k,
                             row["sequence"],
-                            row["position"]] +
+                            row["position"],
+                            row["measure"]] +
                             [v for k, v in sorted_dims.iteritems()])
+
+    with open("answers_eav.csv", "wb") as csv_file:
+        writer = csv.writer(csv_file, delimiter=',')
+
+        writer.writerow(["q_id", "a_id", "measure", "attribute", "value"])
+        for k, row in a_dict.iteritems():
+            for a, v in row["dims"].iteritems():
+                if v <> "All":
+                    writer.writerow([k.split("_")[0],
+                                    k,
+                                    row["measure"],
+                                    a,
+                                    v])
+
+
+
 
     with open("q_levels.csv", "wb") as csv_file:
         writer = csv.writer(csv_file, delimiter=',')
