@@ -7,10 +7,27 @@ import re
 
 allcaps = re.compile('^[^a-z]*$')
 
-q_dict = coll.OrderedDict()
-a_dict = coll.OrderedDict()
-dict_counter = dict()
+tables = coll.OrderedDict()
 
+class table(object):
+    def __init__(self, table_id, category, name, universe, measure, start_pos):
+        self.table_id = table_id
+        self.years = []
+        self.answers = {}
+        self.category = category
+        self.name = name
+        self.universe = universe
+        self.measure = measure
+        self.start_pos = start_pos
+
+
+class answer(object):
+    def __init__(self, number, sequence, position):
+        self.number = number
+        self.sequence = sequence
+        self.position = position
+        self.names = {}
+        self.levels = {}
 
 def parse_lookup(f):
     with open(f, 'rU') as csvfile:
@@ -21,27 +38,16 @@ def parse_lookup(f):
         next(reader)
 
         for i, row in enumerate(reader):
-
             if row[3] == "":
                 if re.match(allcaps, row[7]):
-                    lookup_values['category'] = row[8]
-                    lookup_values['q_name'] = re.sub(r'\([^)]*\)', '', row[7])
-                    start_pos = int(row[4])
-                    lookup_values['q_id'] = row[1]
+                    tables[row[1]] = table(row[1], row[8], re.sub(r'\([^)]*\)', '', row[7]), '', '', int(row[4]))
                 elif re.match(r'^Universe:.*$', row[7]):
-                    lookup_values['universe'] = re.sub(r'Universe:  ', '', row[7]).lower()
-                    q_dict[lookup_values['q_id']] = {
-                                                'category': lookup_values['category'],
-                                                'universe': lookup_values['universe'],
-                                                'name': lookup_values['q_name'] }
+                    tables[row[1]].universe = re.sub(r'Universe:  ', '', row[7]).lower()
             elif re.match(r'^[0-9]*$', row[3]):
-                a_num = str(int(float(row[3])))
-                a_pos = str(int(float(row[3])) + start_pos - 1)
-                a_seq = row[2]
-                a_id = row[1] + '_' + a_num.zfill(3)
-                a_dict[a_id] = {"position": a_pos,
-                                "sequence": a_seq}
-        return q_dict, a_dict
+                a_num = int(float(row[3]))
+                a_pos = str(a_num + tables[row[1]].start_pos - 1)
+                tables[row[1]].answers[row[1] + '_' + str(a_num).zfill(3)] = answer(a_num, row[2], a_pos)
+        return
 
 def parse_shells(f, a_dict):
 
@@ -66,46 +72,47 @@ def parse_shells(f, a_dict):
                 if int(row[5]) < cur_level:
                     # Clear lower levels of hierarchy of their values
                     for c in range(int(row[5]) - 1, cur_level):
-                        lookup_values["level" + str(c + 1)] = ''
-                
+                        lookup_values[str(c + 1)] = ''
+                # Set the current level
                 cur_level = int(row[5])
-
-                # Skip Level 0 Totals
-                # if not row[5] == '0' or not row[3][:5] == "Total":
-                lookup_values["level" + row[5]] = row[3]
-
-                if row[2] in a_dict:
-                    a_dict[row[2]]['levels'] = copy.deepcopy(lookup_values)
-                    a_dict[row[2]]['levels'].pop("a_id")
-    return a_dict
+                lookup_values[str(row[5])] = row[3]
+                try:
+                    if row[2] in tables[row[0]].answers:
+                        tables[row[0]].answers[row[2]].levels = copy.deepcopy(lookup_values)
+                        tables[row[0]].answers[row[2]].levels.pop("a_id")
+                except KeyError:
+                    pass
+    return
 
 def group_answers_by_level(a_dict):
     level_answers = coll.OrderedDict()
-    
 
-    for k, v in a_dict.iteritems():
-        q = k.split("_")[0]
-        # Create one dict per question
-        if q not in level_answers:
-            level_answers[q] = {}
-        for l, value in v["levels"].iteritems():
-            # Create one set per level, per question
-            if l not in level_answers[q]:
-                level_answers[q][l] = set()
-            # Add answers to set
-            level_answers[q][l].add(value)
+    for table_id, val in tables.iteritems():
+        for k, v in val.answers.iteritems():
+            # Create one dict per question
+            if table_id not in level_answers:
+                level_answers[table_id] = {}
+            for l, value in v.levels.iteritems():
+                # Create one set per level, per question
+                if l not in level_answers[table_id]:
+                    level_answers[table_id][l] = set()
+                # Add answers to set
+                level_answers[table_id][l].add(value)
+    return level_answers
 
+
+def id_problem_groupings(level_answers):
     # For identifying problem groupings
     # Finds cases where the same answer value appears in the same question
     # at different levels
     for k, v in level_answers.iteritems():
         for l, s in v.iteritems():
             for i in range(int(l[5]) + 1, len(v) - 1):
-                if s & v["level" + str(i)] and (s & v["level" + str(i)]) != set([""]):
+                if s & v[str(i)] and (s & v[str(i)]) != set([""]):
                     print k
-                    print s & v["level" + str(i)]
+                    print s & v[str(i)]
 
-    return level_answers
+    return
 
 def parse_universes(f):
     with open(f, 'rU') as csvfile:
@@ -142,7 +149,7 @@ def see_all_dimensions(f, v_dict, u_dims):
                 answers = v_dict[row[0]]
                 question_dimensions[row[0]] = {}
                 for c in range(3,9):
-                    level_key = "level" + str(c-2)
+                    level_key = str(c-2)
                     # If a dimension name is specified
                     if row[c] != '':
                         # add it to the set of dimensions
@@ -172,136 +179,98 @@ def see_all_dimensions(f, v_dict, u_dims):
 
         return dimension_values, question_dimensions
 
-def flatten_dimensions(q_dict, a_dict, all_dims, qs_with_dims, universe_dim, universe_meas):
+def flatten_dimensions(q_dict, all_dims, qs_with_dims, universe_dim, universe_meas):
 
-    for k, v in a_dict.iteritems():
-        # Get the question
-        q = k.split("_")[0]
-        # Get the question's universe
-        universe = q_dict[q]["universe"].lower()
-        # Set dimension values to "All" for all dimensions
-        a_dict[k]["dims"] = {dim:"All" for dim in all_dims}
-        # Set the question's measure based on universe
-        a_dict[k]["measure"] = universe_meas[universe]
+    for table_id, val in tables.iteritems():
+        for k, v in val.answers.iteritems():
+            # Set dimension values to "" for all dimensions
+            for dim in all_dims:
+                v.names[dim] = ""
+            # Set the question's measure based on universe
+            val.measure = universe_meas[val.universe]
 
-        # Set the dimension values correctly for the universe of the question
-        for d, val in universe_dim[universe].iteritems():
-            if d in a_dict[k]["dims"] and val.strip() <> '':
-                if a_dict[k]["dims"][d] == "All":
-                    a_dict[k]["dims"][d] = val
-                else:
-                    a_dict[k]["dims"][d] += '|' + val
+            # Set the dimension values correctly for the universe of the question
+            for d, dn in universe_dim[val.universe].iteritems():
+                if d in v.names and dn.strip() <> '':
+                    if v.names[d] == "":
+                        v.names[d] = dn
+                    else:
+                        v.names[d] += '|' + dn
 
-        if "levels" in v:
-            for l, d in v["levels"].iteritems():
-                # if a dimension name has been specified for this level of 
-                # the hierarchy on this answer
-                if l in qs_with_dims[q]:
-                    # Skip values that are blank or Total
-                    if clean(d) == "Total" or qs_with_dims[q][l] == "":
-                        pass
-                    # For real values, replace the "All" with the clean value name
-                    elif qs_with_dims[q][l] in a_dict[k]["dims"] and d.strip() <> '':
-                        if a_dict[k]["dims"][qs_with_dims[q][l]] == "All":
-                            a_dict[k]["dims"][qs_with_dims[q][l]] = clean(d)
-                        else:
-                            a_dict[k]["dims"][qs_with_dims[q][l]] += '|' + clean(d)
+            if v.levels != {}:
+                for l, d in v.levels.iteritems():
+                    # if a dimension name has been specified for this level of 
+                    # the hierarchy on this answer
+                    if l in qs_with_dims[table_id]:
+                        # Skip values that are blank or Total
+                        if clean(d) == "Total" or qs_with_dims[table_id][l] == "":
+                            pass
+                        # For real values, replace the "" with the clean value name
+                        elif qs_with_dims[table_id][l] in v.names and d.strip() <> '':
+                            if v.names[qs_with_dims[table_id][l]] == "":
+                                v.names[qs_with_dims[table_id][l]] = clean(d)
+                            else:
+                                v.names[qs_with_dims[table_id][l]] += '|' + clean(d)
 
-    # print a_dict["B08528_009"]["dims"]["Class of Worker"]
-    return a_dict
+    return
     
 
 def clean(dirty):
     cleaned = re.sub('(\:| \(dollars\)| --)', '', dirty).strip()
-
     return cleaned
 
 
-def aggregate_values(row, levels):
-    for i in range(0,8):
-        if "levels" in row:
-            if "level" + str(i) in row["levels"]:
-                levels.append(row["levels"]["level" + str(i)])
-            else:
-                levels.append("")
-        else:
-            levels = ["", "", "", "", "", "", "", ""]
+# def aggregate_values(row, levels):
+#     for i in range(0,8):
+#         if "levels" in row:
+#             if "level" + str(i) in row["levels"]:
+#                 levels.append(row["levels"]["level" + str(i)])
+#             else:
+#                 levels.append("")
+#         else:
+#             levels = ["", "", "", "", "", "", "", ""]
 
-    return levels
+#     return levels
 
+def remove_non_leaf_nodes(a_dict):
 
-def output_tables(q_dict, a_dict, v_dict):
-    with open("questions.csv", "wb") as csv_file:
-        writer = csv.writer(csv_file, delimiter=',')
-        writer.writerow(["q_id", "Category", "Universe", "Question Name"])
-        for k, row in q_dict.iteritems():
-            writer.writerow([k,
-                            row["category"],
-                            row["universe"],
-                            row["name"]])
+    tab_by_a = {}
+    # Loop through answers by table_id
+    for table_id, val in tables.iteritems():
+        for a_id, answer in val.answers.iteritems():
+            a_vals = set()
 
-    with open("answer_dimensions.csv", "wb") as csv_file:
-        writer = csv.writer(csv_file, delimiter=',')
-        dimension_names = sorted(a_dict["B00001_001"]["dims"].keys())
-        writer.writerow(["q_id", "a_id", "sequence", "position", "measure"] + dimension_names)
+            if table_id not in tab_by_a:
+                tab_by_a[table_id] = {}
 
+            for d, v in answer.levels.iteritems():
+                if clean(v) != '':
+                    a_vals.add(clean(v)) 
+            tab_by_a[table_id][a_id] = a_vals
 
-        for k, row in a_dict.iteritems():
-            # levels = []
-            # levels = aggregate_values(row, levels)
-            sorted_dims = coll.OrderedDict(sorted(row["dims"].items()))
-            writer.writerow([k.split("_")[0],
-                            k,
-                            row["sequence"],
-                            row["position"],
-                            row["measure"]] +
-                            [v for k, v in sorted_dims.iteritems()])
+    for k, v in tab_by_a.iteritems():
+        for a1, s1 in v.iteritems():
+            for a2, s2 in v.iteritems():
+                if s1 < s2 and s1 != s2:
+                    try:
+                        tables[a1.split("_")[0]].answers.pop(a1)
+                    except KeyError:
+                        pass
 
-    with open("answers_eav.csv", "wb") as csv_file:
-        writer = csv.writer(csv_file, delimiter=',')
-
-        writer.writerow(["q_id", "a_id", "measure", "attribute", "value"])
-        for k, row in a_dict.iteritems():
-            for a, v in row["dims"].iteritems():
-                if v <> "All":
-                    writer.writerow([k.split("_")[0],
-                                    k,
-                                    row["measure"],
-                                    a,
-                                    v])
+    return
 
 
+def parse():
 
-
-    with open("q_levels.csv", "wb") as csv_file:
-        writer = csv.writer(csv_file, delimiter=',')
-        for q, levels in v_dict.iteritems():
-            writer.writerow([q, q_dict[q]["name"]])
-            writer.writerow([q, "dimensions"])
-            writer.writerow([q, "values",
-                            list(levels["level0"]) if "level0" in levels else "",
-                            list(levels["level1"]) if "level1" in levels else "",
-                            list(levels["level2"]) if "level2" in levels else "",
-                            list(levels["level3"]) if "level3" in levels else "",
-                            list(levels["level4"]) if "level4" in levels else "",
-                            list(levels["level5"]) if "level5" in levels else "",
-                            list(levels["level6"]) if "level6" in levels else "",
-                            list(levels["level7"]) if "level7" in levels else ""])
-
-
-
-def main():
-
-    questions, answers = parse_lookup(f='ACS_5yr_Seq_Table_Number_Lookup.csv')
-    answers = parse_shells(f ='ACS2015_Table_Shells_w_levels.csv', 
+    answers = parse_lookup(f='input_metadata/ACS_5yr_Seq_Table_Number_Lookup.csv')
+    answers = parse_shells(f ='input_metadata/ACS2015_Table_Shells_w_levels.csv', 
                            a_dict = answers)
     q_by_level = group_answers_by_level(answers)
-    universe_dim, universe_meas = parse_universes(f = 'universe_dimensions.csv')
+    universe_dim, universe_meas = parse_universes(f = 'input_metadata/universe_dimensions.csv')
 
-    all_dims, qs_with_dims = see_all_dimensions(f="q_levels_with_dimensions.csv", v_dict=q_by_level, u_dims = universe_dim)
+    all_dims, qs_with_dims = see_all_dimensions(f="input_metadata/q_levels_with_dimensions.csv", v_dict=q_by_level, u_dims = universe_dim)
 
-    answers_flat = flatten_dimensions(q_dict, a_dict, all_dims, qs_with_dims, universe_dim, universe_meas)
+    remove_non_leaf_nodes(answers)
+    flatten_dimensions(tables, all_dims, qs_with_dims, universe_dim, universe_meas)
 
-    output_tables(questions, answers_flat, q_by_level)
-
-main()
+    return tables, q_by_level
