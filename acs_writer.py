@@ -2,6 +2,7 @@ from acs_parser import parse
 import csv
 import collections as coll
 
+
 def output_tables(q_dict, v_dict):
     with open("output_metadata/tables.csv", "wb") as csv_file:
         writer = csv.writer(csv_file, delimiter=',')
@@ -16,7 +17,6 @@ def output_tables(q_dict, v_dict):
         writer = csv.writer(csv_file, delimiter=',')
         dimension_names = sorted(q_dict["B00001"].answers["B00001_001"].names.keys())
         writer.writerow(["q_id", "a_id", "sequence", "position", "measure"] + dimension_names)
-
 
         for table_id, val in q_dict.iteritems():
             for a_id, row in val.answers.iteritems():
@@ -35,7 +35,7 @@ def output_tables(q_dict, v_dict):
         for table_id, val in q_dict.iteritems():
             for a_id, row in val.answers.iteritems():
                 for a, v in row.names.iteritems():
-                    if v <> "":
+                    if v != "":
                         writer.writerow([table_id,
                                         a_id,
                                         val.measure,

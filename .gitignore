@@ -1,1 +1,3 @@
 /output_data
+/__pycache__/*
+/input_metadata/20*
